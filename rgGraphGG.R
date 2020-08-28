@@ -7,6 +7,17 @@ rgData$"ni101" <- as.numeric(rgData$`NI-101 (m^3/m^3)`)
 rgData$"test" <- as.numeric(rgData$test)
 
 
+# Graphs the soil moisture curves provided into a file, named after the treatments selected to plot.
+# Only plots the values for days between startDate and endDate.
+# @parameter ... : a variable number of strings Should be the name of a specific soil moisture sensor,
+#                  for example AO (Arborist Chips Outflow) or CI (Control Inflow)
+# @parameter graphFile: boolean value that determines whether or not graph should show up in the plot window
+#                       of RStudio or written to a png file.
+# @parameter startDate: a string that contains the earliest date you want to plot from. Must be of the format
+#                       'YYYY-MM-DD'. Default value is 2020-02-01 (Feburary 1st, 2020)  
+# @parameter endDate: a string that contains the latest day you want to plot to. Must be of the form
+#                     'YYYY-MM-DD'. Default value is 2020-07-01 (July 1st, 2020)
+# @return: None. Just writes to a file.
 
 graphMoisture <- function(..., graphFile=TRUE, startDate="2020-02-01", endDate="2020-07-01") {
   x <- list(...)
@@ -15,12 +26,34 @@ graphMoisture <- function(..., graphFile=TRUE, startDate="2020-02-01", endDate="
 }
 
 
+# Graphs the difference of outflow and inflow of soil moisture curves for the provided treatments. Has
+# the same graphFile, startDate, and endDate parameters as before
+# @parameter ...: a variable number of strings. Each string should be the name of a treatment. Must be the
+#                 first letter of the treatment, for example: "C" for control, "A" for arborist chips.
+# @parameter graphFile: boolean value that determines whether or not graph should show up in the plot window
+#                       of RStudio or written to a png file.
+# @parameter startDate: a string that contains the earliest date you want to plot from. Must be of the format
+#                       'YYYY-MM-DD'. Default value is 2020-02-01 (Feburary 1st, 2020)  
+# @parameter endDate: a string that contains the latest day you want to plot to. Must be of the form
+#                     'YYYY-MM-DD'. Default value is 2020-07-01 (July 1st, 2020)
+# @return: None. Writes to a file.
+
 graphMoistureDiff <- function(..., graphFile=TRUE, startDate="2020-02-01", endDate="2020-07-01") {
   x <- list(...)
   plotData = getDiff(x, startDate, endDate)
   plotMoisture(plotData, length(x), graphFile, diff=TRUE)
 }
 
+
+
+# Takes a list of treatment names, a start date, end date, and then returns a dataframe that is
+# rgData but containing only dates between startDate and endDate
+# @parameter treatmentNames : a list of treatment names. "CO" for Control Outflow, "AI" for Arborist Chip Inflow.
+# @parameter startDate : a string representing the earliest day to be plotted
+# @parameter endDate: a string representing the last day to be plotted
+#
+# @return: a dataframe containing the average soil moisture values, grouped by TREATMENT. Also filters out
+#          rows where soil moisture is negative.
 
 getAvg <- function(treatmentNames, startDate, endDate) {
       x <- treatmentNames
@@ -48,6 +81,18 @@ getAvg <- function(treatmentNames, startDate, endDate) {
       }
       return(plotData)
 }
+
+
+# Returns a dataframe with the difference between the outflow and inflow soil moistures for each
+# treatment provided in treatmentNames (a list of strings). Will also only contain rows from startDate
+# to endDate.
+# @parameter treatmentNames: a list of strings. Each string is a treatment name, the first letter of the treatment.
+# @parameter startDate : a string representing the earliest day to be plotted
+# @parameter endDate: a string representing the last day to be plotted
+#
+# @return: a dataframe that contains one column for each value in treatmentNames. The column represents the
+#          average difference between the outflow soil moisture and inflow soil moisture for a given treatment.
+#          Also filters out any negative soil moisture readings.
 
 getDiff <- function(treatmentNames, startDate, endDate) {
     x <- treatmentNames
@@ -104,10 +149,14 @@ getDiff <- function(treatmentNames, startDate, endDate) {
 # the remaining columns as soil moisture readings on the y axis. 
 #
 # @parameter dataframe: a dataframe containing the averages of the treatments 
-# @parameter numArgs:
+# @parameter numArgs: the number of treatments we wish to plot
+# @parameter graphFile: boolean value that determines whether or not graph should show up in the plot window
+#                       of RStudio or written to a png file.
+# @parameter diff: boolean value that determines whether or not we are plotting the difference between outflow
+#                  inflow or not.
+#
+# @ return: None. Writes to a graphfile.
 
-
-      
 plotMoisture <- function(dataframe, numArgs, graphFile, diff) {
     ids <- colnames(dataframe)
     if (numArgs == 1) {
