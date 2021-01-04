@@ -3,7 +3,7 @@ library(dplyr)
 library("ggplot2")
 library(matrixStats)
 
-rg = read_csv("data/combined.csv")
+rg = read_csv("data/moistureVStime.csv")
 names(rg)
 
 
