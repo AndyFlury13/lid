@@ -9,7 +9,7 @@ Another aspect of the [raingarden study](https://www.wastormwatercenter.org/proj
 2. Average the four replicates of a treatment
 Using the notebook, one can graph whichever treatments you wantm and however many you want, on any date range on a single graph. These graphs are stored as png files in the graphs/ subfolder.
 #### Shiny Web App
-Fully functioning Shiny Web App contained in soil_moisture/app.R.
+Fully functioning Shiny Web App contained in soil_moisture/app.R. Soon to be published!
 
 ![Shiny 4 treatment graph](markdown_images/four.png)
 
