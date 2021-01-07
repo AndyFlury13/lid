@@ -10,5 +10,7 @@ Another aspect of the [raingarden study](https://www.wastormwatercenter.org/proj
 Using the notebook, one can graph whichever treatments you wantm and however many you want, on any date range on a single graph. These graphs are stored as png files in the graphs/ subfolder.
 #### Shiny Web App
 Fully functioning Shiny Web App contained in soil_moisture/app.R.
-![Shiny 4 treatment graph](markdown_images/Screen Shot 2021-01-06 at 5.12.49 PM.png)
-![Shiny date graph](markdown_images/Screen Shot 2021-01-06 at 5.13.24 PM.png)
+
+![Shiny 4 treatment graph](markdown_images/four.png)
+
+![Shiny date graph](markdown_images/date.png)
