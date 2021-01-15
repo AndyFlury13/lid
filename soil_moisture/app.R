@@ -9,6 +9,7 @@
 
 #Helper functions
 
+library(plotly)
 library(tidyverse)
 library(dplyr)
 library("ggplot2")
@@ -107,12 +108,12 @@ ui <- fluidPage(
                                  "Medium Bark Out" = "MO",
                                  "Nuggets Out" = "NO"
                                  )),
-            checkboxInput("ribbons", "St Dev Ribbons", TRUE)
+            checkboxInput("ribbons", "St Dev Ribbons", FALSE)
         ),
 
         # Show a plot of the generated distribution
         mainPanel(
-           plotOutput("timeSeries"),
+           plotlyOutput("timeSeries"),
            span(textOutput("dateErrMessage"), style="color:red")
         )
     )
@@ -133,10 +134,13 @@ server <- function(input, output) {
             }
         }
     })
-    output$timeSeries <- renderPlot({
+    output$timeSeries <- renderPlotly({
         # generate bins based on input$bins from ui.R
         #treatmentNames <- processInput(input)
-        graphRG(input$treatments, input$startDate, input$endDate, input$ribbons)
+        p <- graphRG(input$treatments, input$startDate, input$endDate, input$ribbons)
+        print(class(1))
+        print(class(p))
+        ggplotly(p, )
     })
 }
 
@@ -145,8 +149,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     if (diff < 3 || startDate < as.Date("2020-01-27") || endDate < as.Date("2020-01-27")) {
         df <- data.frame()
         plot <- ggplot(df) + geom_point() + xlim(as.Date("2020-02-01"), as.Date("2020-11-01")) + ylim(0, .35)
-        print(plot)
-        return()
+        return(plot)
     }
     summaryRG <- rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
         mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
@@ -181,8 +184,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         xlabel <- xlab("Time")
         ylabel <- ylab("Soil Moisture")
         plot <- plot + xlabel + ylabel + geom_blank()
-        print(plot)
-        return()
+        return(plot)
     }
     plot <- ggplot(data=summaryRG, aes(x=Date))
     lines <- ""
@@ -213,6 +215,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     } else {
         lines <- paste("plot <- plot + ", lines, sep = "")
     }
+    print(lines)
     eval(parse(text=lines))
     legend_pls <- scale_color_manual(values=colors)
     labels <- labs(color="Treatments")
@@ -222,7 +225,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     
     plot <- plot + title + ylabel + xlabel + legend_pls + labels# + ribbon
     fileName <- paste("graphs/", fileName, ".png", sep="")
-    print(plot)
+    return(plot)
 }
 
 # Run the application 
