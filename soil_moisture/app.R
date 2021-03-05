@@ -83,6 +83,101 @@ getFullName <- function(treatmentName) {
     }
 }
 
+# Fill in the NaN values/gaps in our SD column, thus filling up the gaps in the ribbon.
+# We will interpolate the missing values with a simple linear approximation, drawn from the 
+# the "ends" of the gap. We can try to do this inplace or just return the df if it's easier.
+
+interpolateRibbon <- function(df) {
+    for (col_name in names(df)) {
+        gap_found <- FALSE
+        if (grepl("sd", col_name, fixed=TRUE)) {
+            if (nchar(col_name) != 5) {
+                next
+            }
+            y_col = substr(col_name, 1, nchar(col_name)-2)
+            y_col = paste(y_col, "avg", sep="")
+            max_col_name = paste(y_col, "_ribbon_max", sep="")
+            min_col_name = paste(y_col, "_ribbon_min", sep="")
+            df[max_col_name] = df[y_col] + df[col_name]
+            df[min_col_name] = df[y_col] - df[col_name]
+            for (i in (1:length(df[[max_col_name]]))) {
+                val = df[[max_col_name]][i];
+                if (col_name == "CO_sd") {
+                    print(i)
+                    print(val)
+                }
+                if (is.na(val) || is.null(val)) {
+                    if (!gap_found) {
+                        gap_start_y = df[[max_col_name]][i-1];
+                        gap_start_x = i-1
+                        gap_found = TRUE;
+                    }
+                } else {
+                    if (gap_found) {
+                        gap_end_x = i;
+                        gap_end_y = df[[max_col_name]][i];
+                        linear_approx = interpolate(gap_start_x, gap_start_y, gap_end_x, gap_end_y)
+                        for (x_value in (gap_start_x: gap_end_x)) {
+                            
+                            df[[max_col_name]][x_value] <- (linear_approx[1] * x_value) + linear_approx[2]
+                        }
+                        gap_found = FALSE
+                    }
+                }
+            }
+            if (gap_found) {
+                gap_end_x = length(df[[max_col_name]]) 
+                gap_end_y = gap_start_y
+                linear_approx = interpolate(gap_start_x, gap_start_y, gap_end_x, gap_end_y)
+                for (x_value in (gap_start_x: gap_end_x)) {
+                    
+                    df[[max_col_name]][x_value] <- (linear_approx[1] * x_value) + linear_approx[2]
+                }
+                
+            }
+            gap_found = FALSE;
+            for (i in (1:length(df[[min_col_name]]))) {
+                val = df[[min_col_name]][i];
+                if (is.na(val) || is.null(val)) {
+                    if (!gap_found) {
+                        gap_start_y = df[[min_col_name]][i-1];
+                        gap_start_x = i-1
+                        gap_found = TRUE;
+                    }
+                } else {
+                    if (gap_found) {
+                        gap_end_x = i;
+                        gap_end_y = df[[min_col_name]][i];
+                        linear_approx = interpolate(gap_start_x, gap_start_y, gap_end_x, gap_end_y)
+                        for (x_value in (gap_start_x: gap_end_x)) {
+                            df[[min_col_name]][x_value] <- (linear_approx[1] * x_value) + linear_approx[2]
+                        }
+                        gap_found = FALSE
+                    }
+                }
+            }
+            if (gap_found) {
+                gap_end_x = length(df[[min_col_name]]) 
+                gap_end_y = gap_start_y
+                linear_approx = interpolate(gap_start_x, gap_start_y, gap_end_x, gap_end_y)
+                for (x_value in (gap_start_x: gap_end_x)) {
+                    
+                    df[[min_col_name]][x_value] <- (linear_approx[1] * x_value) + linear_approx[2]
+                }
+            }
+            
+        }
+    }
+    
+    return(df)
+}
+
+
+interpolate <- function(x1, y1, x2, y2) {
+    m = (y2 - y1) / (x2-x1)
+    b = m * -1* x1 + y1
+    return(c(m, b))
+}
 
 
 library(shiny)
@@ -97,7 +192,7 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel(
             dateInput("startDate", "Starting Date:", value = "2020-02-01"),
-            dateInput("endDate", "Ending Date:", value = "2020-11-01"),
+            dateInput("endDate", "Ending Date:", value = "2021-02-18"),
             checkboxGroupInput("treatments", "Treatments",
                                c("Arborist Chips In" = "AI",
                                  "Control In" = "CI",
@@ -153,6 +248,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     }
     summaryRG <- rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
         mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        select(-c(line)) %>%
         rename_all(funs(str_replace_all(., " ", "_"))) %>%  #Renaming columns
         rename_all(funs(str_replace_all(.,"-", "_"))) %>%
         rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
@@ -179,6 +275,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         summaryRG[paste(id, "_avg", sep="")] <- avgMoisture
         summaryRG[paste(id, "_sd" ,sep="")] <- sdMoisture
     }
+    
     if (is.null(treatmentNames)) {
         plot <- ggplot(data=summaryRG, aes(x=Date, y = MO_avg))
         xlabel <- xlab("Time")
@@ -186,22 +283,26 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         plot <- plot + xlabel + ylabel + geom_blank()
         return(plot)
     }
+    summaryRG <- interpolateRibbon(summaryRG)
+    write.csv(summaryRG, "ribbon.csv")
+    #print(names(summaryRG))
     plot <- ggplot(data=summaryRG, aes(x=Date))
     lines <- ""
     ribbons <- ""
     title <- ""
     colors <-list()
     fileName <- ""
-    
+    #print(names(summaryRG))
     
     for (treatmentName in treatmentNames) {
         lines <- paste(lines, "geom_line(aes(y=", sep="")
         ribbons <- paste(ribbons, "geom_ribbon(aes(ymin=", sep="")
-        
+        ribbon_min_name = paste(treatmentName, "_avg_ribbon_min", sep="")
+        ribbon_max_name = paste(treatmentName, "_avg_ribbon_max", sep="")
         col_name <- paste(treatmentName, "_avg", sep="")
         col_sd_name <- paste(treatmentName, "_sd", sep="")
         lines <- paste(lines, col_name, ",color='", getFullName(treatmentName), "')) + ", sep="")
-        ribbons <- paste(ribbons, col_name, "-", col_sd_name, ", ymax=", col_name, "+", col_sd_name, "), fill='", getColor(treatmentName, TRUE), "') + ", sep="")
+        ribbons <- paste(ribbons, ribbon_min_name, ", ymax=", ribbon_max_name, "), fill='", getColor(treatmentName, TRUE), "') + ", sep="")
         colors[[treatmentName]] <- getColor(treatmentName, FALSE)
         fileName <- paste(fileName, treatmentName, sep="_")
     }
@@ -227,6 +328,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     fileName <- paste("graphs/", fileName, ".png", sep="")
     return(plot)
 }
+
 
 # Run the application 
 shinyApp(ui = ui, server = server)
