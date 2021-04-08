@@ -279,7 +279,6 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         }
         sdMoisture <- apply(summaryRG[replicates], 1, getSE)
         avgMoisture <- rowMeans(summaryRG[replicates])
-    
         summaryRG[paste(id, "_avg", sep="")] <- avgMoisture
         summaryRG[paste(id, "_se" ,sep="")] <- sdMoisture
     }
