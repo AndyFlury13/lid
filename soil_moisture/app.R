@@ -14,6 +14,7 @@ library(tidyverse)
 library(dplyr)
 library("ggplot2")
 library(matrixStats)
+library(stats)
 
 rg = read_csv("data/moistureVStime.csv")
 names(rg)
@@ -35,15 +36,15 @@ getColor <- function(treatmentName, ribbon) {
         type <- substring(treatmentName, 1, 1)
         if (io == "I") {
             if (ribbon) {
-                color <- switch(type, "A" = "#a9fcc2", "N" = "#fcef99", "C"="#f9b6b6", "M" ="#a9fcfc")
+                color <- switch(type, "A" = "#a4edb9", "N" = "#fcdc0a", "C"="#f9b6b6", "M" ="#a9fcfc")
             } else {
-                color <- switch(type, "A" = "#58fc89", "N" = "#fcdc0a", "C"="#fc6464", "M" ="#02fcfc")
+                color <- switch(type, "A" = "#54f082", "N" = "#e6cc22", "C"="#fc6464", "M" ="#04c4c4")
             }
         } else {
             if (ribbon) {
-                color <- switch(type, "A" = "#648c70", "N" = "#c6bd83", "C"="#bc7a7a", "M" ="#71baba")
+                color <- switch(type, "A" = "#76a885", "N" = "#c6bd83", "C"="#bc7a7a", "M" ="#84caf0")
             } else {
-                color <- switch(type, "A" = "#037024", "N" = "#a08b01", "C"="#990000", "M" ="#00b7b7")
+                color <- switch(type, "A" = "#037024", "N" = "#a08b01", "C"="#990000", "M" ="#0092e0")
             }
         }
         return(color)
@@ -61,6 +62,16 @@ getSD <- function(df) {
     
     sdAvg <- sdAvg** .5
     return(sdAvg)
+}
+
+
+# Row-wise function. Returns the standard error of the vector x. Used with the apply function.
+# @parameter x
+# @return : the standard error of the vector, a float.
+
+getSE <- function(x) {
+    print(sd(x)/length(x))
+    return(sd(x) / length(x))
 }
 
 # Given a treatment name, returns the full treatment name that will be displayed on the grah.
@@ -90,7 +101,7 @@ getFullName <- function(treatmentName) {
 interpolateRibbon <- function(df) {
     for (col_name in names(df)) {
         gap_found <- FALSE
-        if (grepl("sd", col_name, fixed=TRUE)) {
+        if (grepl("se", col_name, fixed=TRUE)) {
             if (nchar(col_name) != 5) {
                 next
             }
@@ -102,10 +113,6 @@ interpolateRibbon <- function(df) {
             df[min_col_name] = df[y_col] - df[col_name]
             for (i in (1:length(df[[max_col_name]]))) {
                 val = df[[max_col_name]][i];
-                if (col_name == "CO_sd") {
-                    print(i)
-                    print(val)
-                }
                 if (is.na(val) || is.null(val)) {
                     if (!gap_found) {
                         gap_start_y = df[[max_col_name]][i-1];
@@ -133,7 +140,6 @@ interpolateRibbon <- function(df) {
                     
                     df[[max_col_name]][x_value] <- (linear_approx[1] * x_value) + linear_approx[2]
                 }
-                
             }
             gap_found = FALSE;
             for (i in (1:length(df[[min_col_name]]))) {
@@ -165,10 +171,8 @@ interpolateRibbon <- function(df) {
                     df[[min_col_name]][x_value] <- (linear_approx[1] * x_value) + linear_approx[2]
                 }
             }
-            
         }
     }
-    
     return(df)
 }
 
@@ -214,7 +218,7 @@ ui <- fluidPage(
     )
 )
 
-# Define server logic required to draw a histogram
+# Define server logic required to draw a graph
 server <- function(input, output) {
     output$dateErrMessage <- renderText({
         diff <- as.numeric(difftime(input$endDate, input$startDate, units = "days"))
@@ -239,6 +243,12 @@ server <- function(input, output) {
     })
 }
 
+
+# Graph the raingarden/raingarden treatment over the given dates using GGPlotly.
+# @parameter treatmentNames: a list of the treatments we wish to display
+# @parameter startDate: a string of the start date. Should be of the format YYYY-MM-DD, like "2020-01-27"
+# @parameter endDate: a string of the end date. See startDate
+# @ribbonBoolean: whether or not to display the standard error ribbons.
 graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     diff <- as.numeric(difftime(endDate, startDate, units = "days"))
     if (diff < 3 || startDate < as.Date("2020-01-27") || endDate < as.Date("2020-01-27")) {
@@ -252,28 +262,26 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         rename_all(funs(str_replace_all(., " ", "_"))) %>%  #Renaming columns
         rename_all(funs(str_replace_all(.,"-", "_"))) %>%
         rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
-        group_by(Date) %>% summarise_if(is.numeric, funs(mean, sd)) %>%#Grouping data by day, taking MEAN instead of MEDIAN
+        group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>% #Grouping data by day, taking MEAN instead of MEDIAN
         filter(Date > startDate) %>% filter(Date < endDate) #Removing rows outside our targeted date range
     summaryRG[summaryRG < 0] <- NA #Removing negative soil moisture values
     
     ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
     for (id in ids) { #Average soil moistures of the 4 replications
         replicates <- c() #The four RGs with the same treatment
-        replicatesSD <- c()
+        replicatesIQR <- c()
         for (col_name in names(summaryRG)) {
             if (grepl(id, col_name, fixed=TRUE)) {
-                if (grepl("sd", col_name, fixed=TRUE)) {
-                    replicatesSD <- c(replicatesSD, col_name)
-                } else {
+                if (!(grepl("iqr", col_name, fixed=TRUE))) {
                     replicates <- c(replicates, col_name)
                 }
             }
         }
-        
+        sdMoisture <- apply(summaryRG[replicates], 1, getSE)
         avgMoisture <- rowMeans(summaryRG[replicates])
-        sdMoisture <- getSD(summaryRG[replicatesSD])
+    
         summaryRG[paste(id, "_avg", sep="")] <- avgMoisture
-        summaryRG[paste(id, "_sd" ,sep="")] <- sdMoisture
+        summaryRG[paste(id, "_se" ,sep="")] <- sdMoisture
     }
     
     if (is.null(treatmentNames)) {
@@ -285,14 +293,12 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     }
     summaryRG <- interpolateRibbon(summaryRG)
     write.csv(summaryRG, "ribbon.csv")
-    #print(names(summaryRG))
     plot <- ggplot(data=summaryRG, aes(x=Date))
     lines <- ""
     ribbons <- ""
     title <- ""
     colors <-list()
     fileName <- ""
-    #print(names(summaryRG))
     
     for (treatmentName in treatmentNames) {
         lines <- paste(lines, "geom_line(aes(y=", sep="")
@@ -300,7 +306,7 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         ribbon_min_name = paste(treatmentName, "_avg_ribbon_min", sep="")
         ribbon_max_name = paste(treatmentName, "_avg_ribbon_max", sep="")
         col_name <- paste(treatmentName, "_avg", sep="")
-        col_sd_name <- paste(treatmentName, "_sd", sep="")
+        col_sd_name <- paste(treatmentName, "_se", sep="")
         lines <- paste(lines, col_name, ",color='", getFullName(treatmentName), "')) + ", sep="")
         ribbons <- paste(ribbons, ribbon_min_name, ", ymax=", ribbon_max_name, "), fill='", getColor(treatmentName, TRUE), "') + ", sep="")
         colors[[treatmentName]] <- getColor(treatmentName, FALSE)
