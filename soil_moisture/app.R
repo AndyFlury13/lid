@@ -15,9 +15,9 @@ library(dplyr)
 library("ggplot2")
 library(matrixStats)
 library(stats)
+library(reshape2)
 
 rg = read_csv("data/moistureVStime.csv")
-names(rg)
 
 
 
@@ -190,7 +190,7 @@ library(shiny)
 ui <- fluidPage(
 
     # Application title
-    titlePanel("Rain Garden Soil Moisture"),
+    titlePanel("Mulch Study Soil Moisture"),
     
     # Sidebar with a slider input for number of bins 
     sidebarLayout(
@@ -213,7 +213,8 @@ ui <- fluidPage(
         # Show a plot of the generated distribution
         mainPanel(
            plotlyOutput("timeSeries"),
-           span(textOutput("dateErrMessage"), style="color:red")
+           span(textOutput("dateErrMessage"), style="color:red"),
+           plotlyOutput("anova")
         )
     )
 )
@@ -223,7 +224,6 @@ server <- function(input, output) {
     output$dateErrMessage <- renderText({
         diff <- as.numeric(difftime(input$endDate, input$startDate, units = "days"))
         if (input$startDate < as.Date("2020-01-27") || input$endDate < as.Date("2020-01-27")) {
-            print("what")
             "Our data does not include values from before January 27th, 2020."
         } else if (diff < 3) {
             if (diff >= 0) {
@@ -236,9 +236,14 @@ server <- function(input, output) {
     output$timeSeries <- renderPlotly({
         # generate bins based on input$bins from ui.R
         #treatmentNames <- processInput(input)
+        
         p <- graphRG(input$treatments, input$startDate, input$endDate, input$ribbons)
         print(class(1))
         print(class(p))
+        ggplotly(p, )
+    })
+    output$anova <- renderPlotly({
+        p <- graphAnova("2020-02-01", "2020-03-01", "day")
         ggplotly(p, )
     })
 }
@@ -262,9 +267,11 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         rename_all(funs(str_replace_all(., " ", "_"))) %>%  #Renaming columns
         rename_all(funs(str_replace_all(.,"-", "_"))) %>%
         rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
-        group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>% #Grouping data by day, taking MEAN instead of MEDIAN
+        group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>% #Grouping data by day, taking MEDIAN instead of MEAN
         filter(Date > startDate) %>% filter(Date < endDate) #Removing rows outside our targeted date range
     summaryRG[summaryRG < 0] <- NA #Removing negative soil moisture values
+    
+    
     
     ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
     for (id in ids) { #Average soil moistures of the 4 replications
@@ -313,7 +320,6 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     }
     colors <- unlist(colors[order(names(colors))], use.names=FALSE)
     fileName <- substr(fileName, 2, nchar(fileName))
-    title <-("Soil Moisture vs Time")
     lines <- substr(lines, 1, nchar(lines)-3)
     ribbons <- substr(ribbons, 1, nchar(ribbons)-3)
     if (ribbonBoolean) {
@@ -327,13 +333,70 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     labels <- labs(color="Treatments")
     xlabel <- xlab("Time")
     ylabel <- ylab("Soil Moisture")
-    title <- ggtitle(title)
+    title <- ggtitle("Moisture vs Time")
     
-    plot <- plot + title + ylabel + xlabel + legend_pls + labels# + ribbon
+    plot <- plot + ylabel + xlabel + legend_pls + labels+ title
     fileName <- paste("graphs/", fileName, ".png", sep="")
     return(plot)
 }
 
+
+
+graphAnova <- function(startDate, endDate, gran) {
+    startDate = "2020-02-01"
+    endDate = "2020-03-01"
+    data = rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
+        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        select(-c(line)) %>%
+        rename_all(funs(str_replace_all(., " ", "_"))) %>%  #Renaming columns
+        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
+        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", "")))
+    if (gran == "day") {
+        data = data %>% filter(Date > startDate) %>% filter(Date < endDate)
+        times = seq(as.Date(startDate), as.Date(endDate), by=gran)
+    } else if (gran == "month") {
+        data = data %>% group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>%
+            filter(Date > startDate) %>% filter(Date < endDate)
+        times = seq(as.Date(startDate), as.Date(endDate), by=gran)
+    }
+    data[data < 0] <- NA
+    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
+    for (id in ids) { #Average soil moistures of the 4 replications
+        replicates <- c() #The four RGs with the same treatment
+        replicatesIQR <- c()
+        for (col_name in names(data)) {
+            if (grepl(id, col_name, fixed=TRUE)) {
+                if (!(grepl("iqr", col_name, fixed=TRUE))) {
+                    replicates <- c(replicates, col_name)
+                }
+            }
+        }
+        avgMoisture <- rowMeans(data[replicates])
+        data[paste(id, "_avg", sep="")] <- avgMoisture
+    }
+    data = data[c("Date", "AO_avg", "NO_avg", "MO_avg", "CO_avg")]
+    anova_df = data.frame(date=double(), pvals=double())
+    for (i in 1:(length(times) - 1)) {
+        step_start = times[i]
+        step_end = times[i+1]
+        step_data = data %>% filter(Date >= step_start) %>% filter(Date < step_end)
+        step_data_vals = step_data[c("AO_avg", "NO_avg", "MO_avg", "CO_avg")]
+        date = format(step_data$'Date'[1])
+        if(dim(step_data_vals)[1]  == 0) {
+            next
+        }
+        step_data = melt(step_data, variable.name='treatment')
+        pval = summary(aov(value ~ treatment, data=step_data))[[1]][["Pr(>F)"]][[1]]
+        print(pval)
+        new_row = c(date, pval)
+        anova_df[nrow(anova_df)+1,] <- new_row
+    }
+    print(anova_df)
+    anova_df <- anova_df %>% mutate(date = as.Date(date, format="%Y-%m-%d"))
+    plot <- ggplot(data=anova_df, aes(x=date))
+    plot <- plot + geom_point(aes(y=pval)) + ylab("P-Value") + xlab("Date") + ggtitle('ANOVA P-test vs time')
+    return(plot)
+}
 
 # Run the application 
 shinyApp(ui = ui, server = server)
