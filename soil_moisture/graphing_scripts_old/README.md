@@ -1,0 +1,1 @@
+Consider moving these scripts back to the soil_moisture folder in order to run them.

@@ -7,8 +7,6 @@
 #    http://shiny.rstudio.com/
 #
 
-#Helper functions
-
 library(plotly)
 library(tidyverse)
 library(dplyr)
@@ -16,17 +14,17 @@ library("ggplot2")
 library(matrixStats)
 library(stats)
 library(reshape2)
-
+library(shiny)
 rg = read_csv("data/moistureVStime.csv")
 
 
+############# HELPER FUNCTIONS ############# 
 
 # Given a treatment name, returns the color the treatment will be graphed with
 # @parameter treatemntName: a two character string denoting the treatment. Example: "AO", "NO", "AI"
 # @parameter ribbon: a boolean indicating whether we should return the color for the ribbon of a line. FALSE for the line itself
 # @return: a string containing the hex code of the color we will graph the treatment as.
 # @stop: if the inputted treatmentName is not a valid string, then we will throw an error.
-
 getColor <- function(treatmentName, ribbon) {
     treatmentNames <- list("AO", "NO", "MO", "CO", "AI", "NI", "CI", "MI")
     if (!(treatmentName %in% treatmentNames)){
@@ -51,11 +49,11 @@ getColor <- function(treatmentName, ribbon) {
     }
 }
 
+
 # Returns the correctly calculated SD of the given df. Not for general use, just a helper function
 # @parameter df: should be a df whose columns are the SDs of the 4 replicate treatments. These SDs are SD of each day.
 # @return : returns a vector with the SDs corretly aggregated. They are aggregated in the following way:
 #                   sdVector = sum(daily_sd ** 2)/ 4 over every day
-
 getSD <- function(df) {
     df <- df ** 2
     sdAvg <- rowMeans(df)
@@ -68,16 +66,15 @@ getSD <- function(df) {
 # Row-wise function. Returns the standard error of the vector x. Used with the apply function.
 # @parameter x
 # @return : the standard error of the vector, a float.
-
 getSE <- function(x) {
     return(sd(x) / length(x))
 }
+
 
 # Given a treatment name, returns the full treatment name that will be displayed on the grah.
 # @parameter treatemntName: a two character string denoting the treatment. Example: "AO", "NO", "AI"
 # @return: a string containing the full name of the treatment. For example, "Arborist Chips Out", "Nuggets Out, "Arborist Chips In"
 # @stop: if the inputted treatmentName is not a valid string, then we will throw an error.
-
 getFullName <- function(treatmentName) {
     treatmentNames <- list("AO", "NO", "MO", "CO", "AI", "NI", "CI", "MI")
     if (!(treatmentName %in% treatmentNames)) {
@@ -93,10 +90,10 @@ getFullName <- function(treatmentName) {
     }
 }
 
+
 # Fill in the NaN values/gaps in our SD column, thus filling up the gaps in the ribbon.
 # We will interpolate the missing values with a simple linear approximation, drawn from the 
 # the "ends" of the gap. We can try to do this inplace or just return the df if it's easier.
-
 interpolateRibbon <- function(df) {
     for (col_name in names(df)) {
         gap_found <- FALSE
@@ -183,9 +180,169 @@ interpolate <- function(x1, y1, x2, y2) {
 }
 
 
-library(shiny)
+# Graph the raingarden/raingarden treatment over the given dates using GGPlotly.
+# @parameter treatmentNames: a list of the treatments we wish to display
+# @parameter startDate: a string of the start date. Should be of the format YYYY-MM-DD, like "2020-01-27"
+# @parameter endDate: a string of the end date. See startDate
+# @ribbonBoolean: whether or not to display the standard error ribbons.
+graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
+    diff <- as.numeric(difftime(endDate, startDate, units = "days"))
+    
+    ### Error handling
+    if (diff < 3 || startDate < as.Date("2020-01-27") || endDate < as.Date("2020-01-27")) {
+        df <- data.frame()
+        plot <- ggplot(df) + geom_point() + xlim(as.Date("2020-02-01"), as.Date("2020-11-01")) + ylim(0, .35)
+        return(plot)
+    }
+    
+    ### Clean up the dataframe
+    data <- rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
+        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        select(-c(line)) %>%
+        rename_all(funs(str_replace_all(., " ", "_"))) %>%
+        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
+        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
+        group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>%
+        filter(Date > startDate) %>% filter(Date < endDate)
+    data[data < 0] <- NA
+    
+    
+    ### Take treatment-wise averages
+    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
+    for (id in ids) { 
+        replicates <- c()
+        replicatesIQR <- c()
+        for (col_name in names(data)) {
+            if (grepl(id, col_name, fixed=TRUE)) {
+                if (!(grepl("iqr", col_name, fixed=TRUE))) {
+                    replicates <- c(replicates, col_name)
+                }
+            }
+        }
+        sdMoisture <- apply(data[replicates], 1, getSE)
+        avgMoisture <- rowMeans(data[replicates])
+        data[paste(id, "_avg", sep="")] <- avgMoisture
+        data[paste(id, "_se" ,sep="")] <- sdMoisture
+    }
+    
+    ### More error handling
+    if (is.null(treatmentNames)) {
+        plot <- ggplot(data=data, aes(x=Date, y = MO_avg))
+        xlabel <- xlab("Time")
+        ylabel <- ylab("Soil Moisture")
+        plot <- plot + xlabel + ylabel + geom_blank()
+        return(plot)
+    }
+    
+    ### Interpolate null ribbon values
+    data <- interpolateRibbon(data)
+    
+    ### Draw plots
+    plot <- ggplot(data=data, aes(x=Date))
+    lines <- ""
+    ribbons <- ""
+    title <- ""
+    colors <-list()
+    for (treatmentName in treatmentNames) {
+        lines <- paste(lines, "geom_line(aes(y=", sep="")
+        ribbons <- paste(ribbons, "geom_ribbon(aes(ymin=", sep="")
+        ribbon_min_name = paste(treatmentName, "_avg_ribbon_min", sep="")
+        ribbon_max_name = paste(treatmentName, "_avg_ribbon_max", sep="")
+        col_name <- paste(treatmentName, "_avg", sep="")
+        col_sd_name <- paste(treatmentName, "_se", sep="")
+        lines <- paste(lines, col_name, ",color='", getFullName(treatmentName), "')) + ", sep="")
+        ribbons <- paste(ribbons, ribbon_min_name, ", ymax=", ribbon_max_name, "), fill='", getColor(treatmentName, TRUE), "') + ", sep="")
+        colors[[treatmentName]] <- getColor(treatmentName, FALSE)
+    }
+    colors <- unlist(colors[order(names(colors))], use.names=FALSE)
+    lines <- substr(lines, 1, nchar(lines)-3)
+    ribbons <- substr(ribbons, 1, nchar(ribbons)-3)
+    if (ribbonBoolean) {
+        lines <- paste("plot <- plot +", ribbons, "+", lines, sep="")
+    } else {
+        lines <- paste("plot <- plot + ", lines, sep = "")
+    }
+    print(lines)
+    eval(parse(text=lines))
+    legend_pls <- scale_color_manual(values=colors)
+    labels <- labs(color="Treatments")
+    xlabel <- xlab("Time")
+    ylabel <- ylab("Soil Moisture")
+    title <- ggtitle("Moisture vs Time")
+    plot <- plot + ylabel + xlabel + legend_pls + labels + title
+    return(plot)
+}
 
-# Define UI for application`` that draws a histogram
+
+# Plot P-values over time.
+# @parameter startDate: a string of the start date. Should be of the format YYYY-MM-DD, like "2020-01-27"
+# @parameter endDate: a string of the end date. See startDate
+# @param gran: a string, either "day", "month", or "season". Specifies how to bin the data
+graphAnova <- function(startDate, endDate, gran) {
+    
+    ### Clean up dataframe. Based on bin, perform summary stat
+    data = rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
+        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        select(-c(line)) %>%
+        rename_all(funs(str_replace_all(., " ", "_"))) %>%
+        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
+        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", "")))
+    if (gran == "day") {
+        data = data %>% filter(Date > startDate) %>% filter(Date < endDate)
+        times = seq(as.Date(startDate), as.Date(endDate), by=gran)
+    } else if (gran == "month") {
+        data = data %>% group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>%
+            filter(Date > startDate) %>% filter(Date < endDate)
+        times = seq(as.Date(startDate), as.Date(endDate), by=gran)
+    }
+    data[data < 0] <- NA
+    
+    ### Take treatment-wise averages
+    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
+    for (id in ids) { #Average soil moistures of the 4 replications
+        replicates <- c() #The four RGs with the same treatment
+        replicatesIQR <- c()
+        for (col_name in names(data)) {
+            if (grepl(id, col_name, fixed=TRUE)) {
+                if (!(grepl("iqr", col_name, fixed=TRUE))) {
+                    replicates <- c(replicates, col_name)
+                }
+            }
+        }
+        avgMoisture <- rowMeans(data[replicates])
+        data[paste(id, "_avg", sep="")] <- avgMoisture
+    }
+    
+    ### Perform P-test for each bin. Choose outlet over inlet
+    data = data[c("Date", "AO_avg", "NO_avg", "MO_avg", "CO_avg")]
+    anova_df = data.frame(date=double(), pvals=double())
+    for (i in 1:(length(times) - 1)) {
+        step_start = times[i]
+        step_end = times[i+1]
+        step_data = data %>% filter(Date >= step_start) %>% filter(Date < step_end)
+        step_data_vals = step_data[c("AO_avg", "NO_avg", "MO_avg", "CO_avg")]
+        date = format(step_data$'Date'[1])
+        if(dim(step_data_vals)[1]  == 0) {
+            next
+        }
+        step_data = melt(step_data, variable.name='treatment')
+        pval = summary(aov(value ~ treatment, data=step_data))[[1]][["Pr(>F)"]][[1]]
+        new_row = c(date, pval)
+        anova_df[nrow(anova_df)+1,] <- new_row
+    }
+    
+    ### Draw plots
+    anova_df <- anova_df %>% mutate(date = as.Date(date, format="%Y-%m-%d"))
+    plot <- ggplot(data=anova_df, aes(x=date))
+    plot <- plot + geom_point(aes(y=pval)) + ylab("P-Value") + xlab("Date") + ggtitle('ANOVA')
+    return(plot)
+}
+
+############################################
+
+
+############# USER INTERFACE ###############
+
 ui <- fluidPage(
 
     # Application title
@@ -206,8 +363,8 @@ ui <- fluidPage(
                                  "Medium Bark Out" = "MO",
                                  "Nuggets Out" = "NO"
                                  )),
-            checkboxInput("ribbons", "St Dev Ribbons", FALSE),
-            radioButtons("gran", "ANOVA Granularity:",
+            checkboxInput("ribbons", "St Err Ribbons", FALSE),
+            radioButtons("gran", "ANOVA Bins:",
                          c("Day" = "day",
                            "Month" = "month",
                            "Season" = "season")),
@@ -221,8 +378,11 @@ ui <- fluidPage(
         )
     )
 )
+############################################
 
-# Define server logic required to draw a graph
+
+############## SERVER LOGIC ################
+
 server <- function(input, output) {
     output$dateErrMessage <- renderText({
         diff <- as.numeric(difftime(input$endDate, input$startDate, units = "days"))
@@ -237,8 +397,6 @@ server <- function(input, output) {
         }
     })
     output$timeSeries <- renderPlotly({
-        # generate bins based on input$bins from ui.R
-        #treatmentNames <- processInput(input)
         
         p <- graphRG(input$treatments, input$startDate, input$endDate, input$ribbons)
         print(class(1))
@@ -251,151 +409,4 @@ server <- function(input, output) {
     })
 }
 
-
-# Graph the raingarden/raingarden treatment over the given dates using GGPlotly.
-# @parameter treatmentNames: a list of the treatments we wish to display
-# @parameter startDate: a string of the start date. Should be of the format YYYY-MM-DD, like "2020-01-27"
-# @parameter endDate: a string of the end date. See startDate
-# @ribbonBoolean: whether or not to display the standard error ribbons.
-graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
-    diff <- as.numeric(difftime(endDate, startDate, units = "days"))
-    if (diff < 3 || startDate < as.Date("2020-01-27") || endDate < as.Date("2020-01-27")) {
-        df <- data.frame()
-        plot <- ggplot(df) + geom_point() + xlim(as.Date("2020-02-01"), as.Date("2020-11-01")) + ylim(0, .35)
-        return(plot)
-    }
-    summaryRG <- rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
-        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
-        select(-c(line)) %>%
-        rename_all(funs(str_replace_all(., " ", "_"))) %>%  #Renaming columns
-        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
-        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
-        group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>% #Grouping data by day, taking MEDIAN instead of MEAN
-        filter(Date > startDate) %>% filter(Date < endDate) #Removing rows outside our targeted date range
-    summaryRG[summaryRG < 0] <- NA #Removing negative soil moisture values
-    
-    
-    
-    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
-    for (id in ids) { #Average soil moistures of the 4 replications
-        replicates <- c() #The four RGs with the same treatment
-        replicatesIQR <- c()
-        for (col_name in names(summaryRG)) {
-            if (grepl(id, col_name, fixed=TRUE)) {
-                if (!(grepl("iqr", col_name, fixed=TRUE))) {
-                    replicates <- c(replicates, col_name)
-                }
-            }
-        }
-        sdMoisture <- apply(summaryRG[replicates], 1, getSE)
-        avgMoisture <- rowMeans(summaryRG[replicates])
-        summaryRG[paste(id, "_avg", sep="")] <- avgMoisture
-        summaryRG[paste(id, "_se" ,sep="")] <- sdMoisture
-    }
-    
-    if (is.null(treatmentNames)) {
-        plot <- ggplot(data=summaryRG, aes(x=Date, y = MO_avg))
-        xlabel <- xlab("Time")
-        ylabel <- ylab("Soil Moisture")
-        plot <- plot + xlabel + ylabel + geom_blank()
-        return(plot)
-    }
-    summaryRG <- interpolateRibbon(summaryRG)
-    write.csv(summaryRG, "ribbon.csv")
-    plot <- ggplot(data=summaryRG, aes(x=Date))
-    lines <- ""
-    ribbons <- ""
-    title <- ""
-    colors <-list()
-    fileName <- ""
-    
-    for (treatmentName in treatmentNames) {
-        lines <- paste(lines, "geom_line(aes(y=", sep="")
-        ribbons <- paste(ribbons, "geom_ribbon(aes(ymin=", sep="")
-        ribbon_min_name = paste(treatmentName, "_avg_ribbon_min", sep="")
-        ribbon_max_name = paste(treatmentName, "_avg_ribbon_max", sep="")
-        col_name <- paste(treatmentName, "_avg", sep="")
-        col_sd_name <- paste(treatmentName, "_se", sep="")
-        lines <- paste(lines, col_name, ",color='", getFullName(treatmentName), "')) + ", sep="")
-        ribbons <- paste(ribbons, ribbon_min_name, ", ymax=", ribbon_max_name, "), fill='", getColor(treatmentName, TRUE), "') + ", sep="")
-        colors[[treatmentName]] <- getColor(treatmentName, FALSE)
-        fileName <- paste(fileName, treatmentName, sep="_")
-    }
-    colors <- unlist(colors[order(names(colors))], use.names=FALSE)
-    fileName <- substr(fileName, 2, nchar(fileName))
-    lines <- substr(lines, 1, nchar(lines)-3)
-    ribbons <- substr(ribbons, 1, nchar(ribbons)-3)
-    if (ribbonBoolean) {
-        lines <- paste("plot <- plot +", ribbons, "+", lines, sep="")
-    } else {
-        lines <- paste("plot <- plot + ", lines, sep = "")
-    }
-    print(lines)
-    eval(parse(text=lines))
-    legend_pls <- scale_color_manual(values=colors)
-    labels <- labs(color="Treatments")
-    xlabel <- xlab("Time")
-    ylabel <- ylab("Soil Moisture")
-    title <- ggtitle("Moisture vs Time")
-    
-    plot <- plot + ylabel + xlabel + legend_pls + labels+ title
-    fileName <- paste("graphs/", fileName, ".png", sep="")
-    return(plot)
-}
-
-
-
-graphAnova <- function(startDate, endDate, gran) {
-    data = rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
-        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
-        select(-c(line)) %>%
-        rename_all(funs(str_replace_all(., " ", "_"))) %>%  #Renaming columns
-        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
-        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", "")))
-    if (gran == "day") {
-        data = data %>% filter(Date > startDate) %>% filter(Date < endDate)
-        times = seq(as.Date(startDate), as.Date(endDate), by=gran)
-    } else if (gran == "month") {
-        data = data %>% group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>%
-            filter(Date > startDate) %>% filter(Date < endDate)
-        times = seq(as.Date(startDate), as.Date(endDate), by=gran)
-    }
-    data[data < 0] <- NA
-    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
-    for (id in ids) { #Average soil moistures of the 4 replications
-        replicates <- c() #The four RGs with the same treatment
-        replicatesIQR <- c()
-        for (col_name in names(data)) {
-            if (grepl(id, col_name, fixed=TRUE)) {
-                if (!(grepl("iqr", col_name, fixed=TRUE))) {
-                    replicates <- c(replicates, col_name)
-                }
-            }
-        }
-        avgMoisture <- rowMeans(data[replicates])
-        data[paste(id, "_avg", sep="")] <- avgMoisture
-    }
-    data = data[c("Date", "AO_avg", "NO_avg", "MO_avg", "CO_avg")]
-    anova_df = data.frame(date=double(), pvals=double())
-    for (i in 1:(length(times) - 1)) {
-        step_start = times[i]
-        step_end = times[i+1]
-        step_data = data %>% filter(Date >= step_start) %>% filter(Date < step_end)
-        step_data_vals = step_data[c("AO_avg", "NO_avg", "MO_avg", "CO_avg")]
-        date = format(step_data$'Date'[1])
-        if(dim(step_data_vals)[1]  == 0) {
-            next
-        }
-        step_data = melt(step_data, variable.name='treatment')
-        pval = summary(aov(value ~ treatment, data=step_data))[[1]][["Pr(>F)"]][[1]]
-        new_row = c(date, pval)
-        anova_df[nrow(anova_df)+1,] <- new_row
-    }
-    anova_df <- anova_df %>% mutate(date = as.Date(date, format="%Y-%m-%d"))
-    plot <- ggplot(data=anova_df, aes(x=date))
-    plot <- plot + geom_point(aes(y=pval)) + ylab("P-Value") + xlab("Date") + ggtitle('ANOVA')
-    return(plot)
-}
-
-# Run the application 
 shinyApp(ui = ui, server = server)
