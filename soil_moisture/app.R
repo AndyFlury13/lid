@@ -70,7 +70,6 @@ getSD <- function(df) {
 # @return : the standard error of the vector, a float.
 
 getSE <- function(x) {
-    print(sd(x)/length(x))
     return(sd(x) / length(x))
 }
 
@@ -207,7 +206,11 @@ ui <- fluidPage(
                                  "Medium Bark Out" = "MO",
                                  "Nuggets Out" = "NO"
                                  )),
-            checkboxInput("ribbons", "St Dev Ribbons", FALSE)
+            checkboxInput("ribbons", "St Dev Ribbons", FALSE),
+            radioButtons("gran", "ANOVA Granularity:",
+                         c("Day" = "day",
+                           "Month" = "month",
+                           "Season" = "season")),
         ),
 
         # Show a plot of the generated distribution
@@ -243,7 +246,7 @@ server <- function(input, output) {
         ggplotly(p, )
     })
     output$anova <- renderPlotly({
-        p <- graphAnova("2020-02-01", "2020-03-01", "day")
+        p <- graphAnova(input$startDate, input$endDate, input$gran)
         ggplotly(p, )
     })
 }
@@ -343,8 +346,6 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
 
 
 graphAnova <- function(startDate, endDate, gran) {
-    startDate = "2020-02-01"
-    endDate = "2020-03-01"
     data = rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
         mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
         select(-c(line)) %>%
@@ -387,14 +388,12 @@ graphAnova <- function(startDate, endDate, gran) {
         }
         step_data = melt(step_data, variable.name='treatment')
         pval = summary(aov(value ~ treatment, data=step_data))[[1]][["Pr(>F)"]][[1]]
-        print(pval)
         new_row = c(date, pval)
         anova_df[nrow(anova_df)+1,] <- new_row
     }
-    print(anova_df)
     anova_df <- anova_df %>% mutate(date = as.Date(date, format="%Y-%m-%d"))
     plot <- ggplot(data=anova_df, aes(x=date))
-    plot <- plot + geom_point(aes(y=pval)) + ylab("P-Value") + xlab("Date") + ggtitle('ANOVA P-test vs time')
+    plot <- plot + geom_point(aes(y=pval)) + ylab("P-Value") + xlab("Date") + ggtitle('ANOVA')
     return(plot)
 }
 
