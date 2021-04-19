@@ -328,7 +328,6 @@ graphAnova <- function(startDate, endDate, gran) {
         step_data = step_data[ , c(2, 3, 4, 5)]
         step_data = melt(step_data, na.rm=TRUE)
         pval = summary(aov(value ~ variable, data=step_data))[[1]][["Pr(>F)"]][[1]]
-        print(summary(aov(value ~ variable, data=step_data))[[1]])
         new_row = c(date, pval)
         anova_df[nrow(anova_df)+1,] <- new_row
     }
@@ -338,6 +337,47 @@ graphAnova <- function(startDate, endDate, gran) {
     plot <- ggplot(data=anova_df, aes(x=date))
     plot <- plot + geom_point(aes(y=pval)) + ylab("P-Value") + xlab("Date") + ggtitle('ANOVA')
     return(plot)
+}
+
+
+graphBox <- function(startDate, endDate, wet) {
+    data = rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
+        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        select(-c(line)) %>%
+        rename_all(funs(str_replace_all(., " ", "_"))) %>%
+        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
+        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", "")))
+    data[data < 0] <- NA
+    
+    ### Take treatment-wise averages
+    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
+    for (id in ids) { #Average soil moistures of the 4 replications
+        replicates <- c() #The four RGs with the same treatment
+        replicatesIQR <- c()
+        for (col_name in names(data)) {
+            if (grepl(id, col_name, fixed=TRUE)) {
+                if (!(grepl("iqr", col_name, fixed=TRUE))) {
+                    replicates <- c(replicates, col_name)
+                }
+            }
+        }
+        avgMoisture <- rowMeans(data[replicates])
+        data[paste(id, "_avg", sep="")] <- avgMoisture
+    }
+    data = data[c("Date", "AO_avg", "NO_avg", "MO_avg", "CO_avg")]
+    
+    wet1 = data %>% filter(Date > startDate) %>% filter(Date < endDate)
+    print(wet1)
+    wet1 <- wet1[c(2, 3, 4, 5)]
+    wet1 <- melt(wet1, na.rm= TRUE)
+    if (wet) {
+        title <- paste(startDate, "to", endDate, "(WET)")
+    } else {
+        title <- paste(startDate, "to", endDate, "(DRY)")
+    }
+    p <- ggplot(wet1, aes(x=variable, y=value)) + 
+        geom_boxplot() + ylab("Soil Moisture") + xlab("Treatment") + ggtitle(title)
+    return(p)
 }
 
 ############################################
@@ -376,7 +416,10 @@ ui <- fluidPage(
         mainPanel(
            plotlyOutput("timeSeries"),
            span(textOutput("dateErrMessage"), style="color:red"),
-           plotlyOutput("anova")
+           plotlyOutput("anova"),
+           plotlyOutput('boxplot1'),
+           plotlyOutput('boxplot2'),
+           plotlyOutput('boxplot3')
         )
     )
 )
@@ -408,6 +451,18 @@ server <- function(input, output) {
     output$anova <- renderPlotly({
         p <- graphAnova(input$startDate, input$endDate, input$gran)
         ggplotly(p, )
+    })
+    output$boxplot1 <- renderPlotly({
+        p <- graphBox("2019-10-01", "2020-04-01", TRUE)
+        ggplotly(p,)
+    })
+    output$boxplot2 <- renderPlotly({
+        p <- graphBox("2020-04-01", "2020-10-01", FALSE)
+        ggplotly(p,)
+    })
+    output$boxplot3 <- renderPlotly({
+        p <- graphBox("2020-10-01", "2021-04-01", TRUE)
+        ggplotly(p,)
     })
 }
 
