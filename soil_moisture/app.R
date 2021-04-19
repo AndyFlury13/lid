@@ -325,8 +325,10 @@ graphAnova <- function(startDate, endDate, gran) {
         if(dim(step_data_vals)[1]  == 0) {
             next
         }
-        step_data = melt(step_data, variable.name='treatment')
-        pval = summary(aov(value ~ treatment, data=step_data))[[1]][["Pr(>F)"]][[1]]
+        step_data = step_data[ , c(2, 3, 4, 5)]
+        step_data = melt(step_data, na.rm=TRUE)
+        pval = summary(aov(value ~ variable, data=step_data))[[1]][["Pr(>F)"]][[1]]
+        print(summary(aov(value ~ variable, data=step_data))[[1]])
         new_row = c(date, pval)
         anova_df[nrow(anova_df)+1,] <- new_row
     }
