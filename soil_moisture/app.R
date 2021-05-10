@@ -237,6 +237,8 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     ### Interpolate null ribbon values
     data <- interpolateRibbon(data)
     
+    data["CI_201_median"] 
+    
     ### Draw plots
     plot <- ggplot(data=data, aes(x=Date))
     lines <- ""
@@ -340,6 +342,9 @@ graphAnova <- function(startDate, endDate, gran) {
 }
 
 
+# Create boxplots of each treatment's moisture distribution over a wet/dry season
+# @parameter
+
 graphBox <- function(startDate, endDate, wet) {
     data = rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
         mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
@@ -380,6 +385,143 @@ graphBox <- function(startDate, endDate, wet) {
     return(p)
 }
 
+# Find a drying curve
+# Hardcoded right now for AO_AVG
+findDrying <- function(startDate, endDate, wettingRate, data) {
+    curves = list()
+    startIndex <- 1
+    m0 <- data[["AO_avg"]][1]
+    m1 <- data[["AO_avg"]][2]
+    d <- 1
+    while(d < nrow(data)+1) {
+        drying = FALSE
+        while ((d < nrow(data)+1) && (m1 <= m0 || (m1 - m0 < wettingRate)))  {
+            d <- d + 1
+            m0 <- data[["AO_avg"]][d]
+            m1 <- data[["AO_avg"]][d+1]
+            if (d >= 242 && d < 248) {
+                print(data[["Date"]][d])
+                print(m1-m0)
+                
+            }
+            while ((is.na(m0) || is.na(m1)) && (d < nrow(data)+1)) {
+                
+                d <- d + 1
+                m0 <- data[["AO_avg"]][d]
+                m1 <- data[["AO_avg"]][d+1]
+                
+            }
+            drying = TRUE
+        }
+        endIndex <- d-1
+        
+        if (drying) {
+            curves <- c(curves, c(startIndex, endIndex))
+        }
+        startIndex <- d
+        m0 <- data[["AO_avg"]][d]
+        m1 <- data[["AO_avg"]][d+1]
+        d <- d+1
+    }
+    
+   
+    return(curves)
+    
+}
+
+graphDryingCurves <- function(treatmentNames, startDate, endDate) {
+    treatmentNames <- c("AO")
+    diff <- as.numeric(difftime(endDate, startDate, units = "days"))
+    
+    ### Error handling
+    if (diff < 3 || startDate < as.Date("2020-01-27") || endDate < as.Date("2020-01-27")) {
+        df <- data.frame()
+        plot <- ggplot(df) + geom_point() + xlim(as.Date("2020-02-01"), as.Date("2020-11-01")) + ylim(0, .35)
+        return(plot)
+    }
+    
+    ### Clean up the dataframe
+    data <- rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
+        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        select(-c(line)) %>%
+        rename_all(funs(str_replace_all(., " ", "_"))) %>%
+        rename_all(funs(str_replace_all(.,"-", "_"))) %>%
+        rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
+        group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>%
+        filter(Date > startDate) %>% filter(Date < endDate)
+    data[data < 0] <- NA
+    
+    
+    ### Take treatment-wise averages
+    ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
+    for (id in ids) { 
+        replicates <- c()
+        replicatesIQR <- c()
+        for (col_name in names(data)) {
+            if (grepl(id, col_name, fixed=TRUE)) {
+                if (!(grepl("iqr", col_name, fixed=TRUE))) {
+                    replicates <- c(replicates, col_name)
+                }
+            }
+        }
+        sdMoisture <- apply(data[replicates], 1, getSE)
+        avgMoisture <- rowMeans(data[replicates])
+        data[paste(id, "_avg", sep="")] <- avgMoisture
+        data[paste(id, "_se" ,sep="")] <- sdMoisture
+    }
+    
+    curves <- findDrying(startDate, endDate, .008, data)
+    i = 1
+    
+    while (i <= nrow(data)) {
+        j <- 1
+        inDryingCurve = FALSE
+        while (j <= length(curves)) {
+            start <- curves[[j]]
+            end <- curves[[j+1]]
+            if (i >= start && i <= end) {
+                inDryingCurve = TRUE
+                break
+            }
+            j <- j+2
+        }
+        if (!(inDryingCurve)) {
+            data[i,68] <- NA  ###MAGIC NUMBER
+        }
+        
+        i <- i+1
+    }
+    
+    
+    
+    plot <- ggplot(data=data, aes(x=Date))
+    lines <- ""
+    ribbons <- ""
+    title <- ""
+    colors <-list()
+    for (treatmentName in treatmentNames) {
+        lines <- paste(lines, "geom_line(aes(y=", sep="")
+        col_name <- paste(treatmentName, "_avg", sep="")
+        col_sd_name <- paste(treatmentName, "_se", sep="")
+        lines <- paste(lines, col_name, ",color='", getFullName(treatmentName), "')) + ", sep="")
+        colors[[treatmentName]] <- getColor(treatmentName, FALSE)
+    }
+    colors <- unlist(colors[order(names(colors))], use.names=FALSE)
+    lines <- substr(lines, 1, nchar(lines)-3)
+    lines <- paste("plot <- plot + ", lines, sep = "")
+    print(lines)
+    eval(parse(text=lines))
+    legend_pls <- scale_color_manual(values=colors)
+    labels <- labs(color="Treatments")
+    xlabel <- xlab("Time")
+    ylabel <- ylab("Soil Moisture")
+    title <- ggtitle("Moisture vs Time")
+    plot <- plot + ylabel + xlabel + legend_pls + labels + title
+    return(plot)
+    
+} 
+
+
 ############################################
 
 
@@ -416,6 +558,7 @@ ui <- fluidPage(
         mainPanel(
            plotlyOutput("timeSeries"),
            span(textOutput("dateErrMessage"), style="color:red"),
+           plotlyOutput("dryingCurves"),
            plotlyOutput("anova"),
            plotlyOutput('boxplot1'),
            plotlyOutput('boxplot2'),
@@ -444,26 +587,37 @@ server <- function(input, output) {
     output$timeSeries <- renderPlotly({
         
         p <- graphRG(input$treatments, input$startDate, input$endDate, input$ribbons)
-        print(class(1))
-        print(class(p))
         ggplotly(p, )
     })
-    output$anova <- renderPlotly({
-        p <- graphAnova(input$startDate, input$endDate, input$gran)
-        ggplotly(p, )
+    
+    output$dryingCurves <- renderPlotly({
+        p <- graphDryingCurves(input$treatments, input$startDate, input$endDate)
+        print(p)
+        ggplotly(p)
     })
-    output$boxplot1 <- renderPlotly({
-        p <- graphBox("2019-10-01", "2020-04-01", TRUE)
-        ggplotly(p,)
-    })
-    output$boxplot2 <- renderPlotly({
-        p <- graphBox("2020-04-01", "2020-10-01", FALSE)
-        ggplotly(p,)
-    })
-    output$boxplot3 <- renderPlotly({
-        p <- graphBox("2020-10-01", "2021-04-01", TRUE)
-        ggplotly(p,)
-    })
+    
+    
+    ### Normality testing and boxplots
+    ### Set to true if you want to run them!
+    if (FALSE) {
+        output$anova <- renderPlotly({
+            p <- graphAnova(input$startDate, input$endDate, input$gran)
+            ggplotly(p, )
+        })
+        
+        output$boxplot1 <- renderPlotly({
+            p <- graphBox("2019-10-01", "2020-04-01", TRUE)
+            ggplotly(p,)
+        })
+        output$boxplot2 <- renderPlotly({
+            p <- graphBox("2020-04-01", "2020-10-01", FALSE)
+            ggplotly(p,)
+        })
+        output$boxplot3 <- renderPlotly({
+            p <- graphBox("2020-10-01", "2021-04-01", TRUE)
+            ggplotly(p,)
+        })
+    }
 }
 
 shinyApp(ui = ui, server = server)
