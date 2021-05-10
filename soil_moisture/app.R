@@ -399,11 +399,6 @@ findDrying <- function(startDate, endDate, wettingRate, data) {
             d <- d + 1
             m0 <- data[["AO_avg"]][d]
             m1 <- data[["AO_avg"]][d+1]
-            if (d >= 242 && d < 248) {
-                print(data[["Date"]][d])
-                print(m1-m0)
-                
-            }
             while ((is.na(m0) || is.na(m1)) && (d < nrow(data)+1)) {
                 
                 d <- d + 1
@@ -592,7 +587,6 @@ server <- function(input, output) {
     
     output$dryingCurves <- renderPlotly({
         p <- graphDryingCurves(input$treatments, input$startDate, input$endDate)
-        print(p)
         ggplotly(p)
     })
     
