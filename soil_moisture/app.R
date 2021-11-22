@@ -15,6 +15,9 @@ library(matrixStats)
 library(stats)
 library(reshape2)
 library(shiny)
+library(lubridate)
+
+
 rg = read_csv("data/moistureVStime.csv")
 
 
@@ -72,7 +75,7 @@ getSE <- function(x) {
 
 
 # Given a treatment name, returns the full treatment name that will be displayed on the grah.
-# @parameter treatemntName: a two character string denoting the treatment. Example: "AO", "NO", "AI"
+# @parameter treatmentName: a two character string denoting the treatment. Example: "AO", "NO", "AI"
 # @return: a string containing the full name of the treatment. For example, "Arborist Chips Out", "Nuggets Out, "Arborist Chips In"
 # @stop: if the inputted treatmentName is not a valid string, then we will throw an error.
 getFullName <- function(treatmentName) {
@@ -173,11 +176,25 @@ interpolateRibbon <- function(df) {
 }
 
 
+getLatestValidDate <- function(dates) {
+    i <- length(dates)
+    print(i)
+    while (i > 0) {
+        if (!(is.na(dates[i]))) {
+            return(dates[i])
+        }
+        i = i - 1
+    }
+    return("2020-10-13")
+}
+
 interpolate <- function(x1, y1, x2, y2) {
     m = (y2 - y1) / (x2-x1)
     b = m * -1* x1 + y1
     return(c(m, b))
 }
+finalDate <- "2020-10-13"
+
 
 
 # Graph the raingarden/raingarden treatment over the given dates using GGPlotly.
@@ -195,19 +212,21 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
         return(plot)
     }
     
+    
     ### Clean up the dataframe
     data <- rg %>% mutate(X1 = NULL, Source.Name = NULL, 'Line#' = NULL, "m^3/m^3,  Soil Moisture Stn" = NULL) %>%
-        mutate(Date = as.Date(Date, format="%m/%d/%y %H:%M")) %>%
+        mutate(Date = as.Date(mdy_hm(Date))) %>%
         select(-c(line)) %>%
         rename_all(funs(str_replace_all(., " ", "_"))) %>%
         rename_all(funs(str_replace_all(.,"-", "_"))) %>%
         rename_all(funs(str_replace_all(., "(_\\(m\\^3/m\\^3\\))", ""))) %>%
         group_by(Date) %>% summarise_all(list(median=median, iqr=IQR), na.rm=TRUE) %>%
         filter(Date > startDate) %>% filter(Date < endDate)
+    
     data[data < 0] <- NA
+    finalDate <<- getLatestValidDate(data$Date)
     
-    
-    ### Take treatment-wise averages
+    ### Take treatment-wise averages "CO"
     ids <- c("AI", "AO", "CI", "CO", "MI","MO", "NI", "NO")
     for (id in ids) { 
         replicates <- c()
@@ -237,7 +256,6 @@ graphRG <- function(treatmentNames, startDate, endDate, ribbonBoolean) {
     ### Interpolate null ribbon values
     data <- interpolateRibbon(data)
     
-    data["CI_201_median"] 
     
     ### Draw plots
     plot <- ggplot(data=data, aes(x=Date))
@@ -531,7 +549,7 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel(
             dateInput("startDate", "Starting Date:", value = "2020-02-01"),
-            dateInput("endDate", "Ending Date:", value = "2021-02-18"),
+            dateInput("endDate", "Ending Date:", value = finalDate),
             checkboxGroupInput("treatments", "Treatments",
                                c("Arborist Chips In" = "AI",
                                  "Control In" = "CI",
@@ -585,10 +603,10 @@ server <- function(input, output) {
         ggplotly(p, )
     })
     
-    output$dryingCurves <- renderPlotly({
-        p <- graphDryingCurves(input$treatments, input$startDate, input$endDate)
-        ggplotly(p)
-    })
+    #output$dryingCurves <- renderPlotly({
+    #    p <- graphDryingCurves(input$treatments, input$startDate, input$endDate)
+    #    ggplotly(p)
+    #})
     
     
     ### Normality testing and boxplots
