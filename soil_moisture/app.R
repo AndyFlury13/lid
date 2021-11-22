@@ -185,7 +185,7 @@ getLatestValidDate <- function(dates) {
         }
         i = i - 1
     }
-    return("2020-10-13")
+    return("2021-11-01")
 }
 
 interpolate <- function(x1, y1, x2, y2) {
@@ -193,7 +193,7 @@ interpolate <- function(x1, y1, x2, y2) {
     b = m * -1* x1 + y1
     return(c(m, b))
 }
-finalDate <- "2020-10-13"
+finalDate <- "2021-11-01"
 
 
 
